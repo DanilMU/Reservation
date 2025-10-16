@@ -1,5 +1,9 @@
-import { Injectable, ConflictException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service'; // Путь зависит от вашей структуры
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 
 @Injectable()
@@ -9,17 +13,44 @@ export class BookingsService {
   async reserve(dto: CreateBookingDto) {
     const { event_id, user_id } = dto;
 
-    // Проверка: существует ли событие?
-    const event = await this.prisma.event.findUnique({
-      where: { id: event_id },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Найти событие
+      const event = await tx.event.findUnique({
+        where: { id: event_id },
+      });
 
-    if (!event) {
-      throw new ConflictException(`Событие с ID ${event_id} не существует.`);
-    }
+      if (!event) {
+        throw new NotFoundException(`Событие с ID ${event_id} не найдено.`);
+      }
 
-    try {
-      const booking = await this.prisma.booking.create({
+      // 2. Проверить наличие свободных мест
+      if (event.booked_seats >= event.total_seats) {
+        throw new ConflictException('Свободных мест на это событие больше нет.');
+      }
+
+      // 3. Проверить, не бронировал ли пользователь это событие ранее
+      const existingBooking = await tx.booking.findUnique({
+        where: {
+          event_id_user_id: {
+            event_id,
+            user_id,
+          },
+        },
+      });
+
+      if (existingBooking) {
+        throw new ConflictException(
+          `Вы уже забронировали место на это событие.`,
+        );
+      }
+
+      // 4. Создать бронирование и обновить счетчик мест
+      await tx.event.update({
+        where: { id: event_id },
+        data: { booked_seats: { increment: 1 } },
+      });
+
+      const newBooking = await tx.booking.create({
         data: {
           event_id,
           user_id,
@@ -29,15 +60,8 @@ export class BookingsService {
       return {
         success: true,
         message: 'Бронирование прошло успешно.',
-        data: booking,
+        data: newBooking,
       };
-    } catch (error) {
-      if (error.code === 'P2002') { 
-        throw new ConflictException(
-          `Пользователь ${user_id} не может забронировать дважды на событие ${event_id}.`,
-        );
-      }
-      throw error;
-    }
+    });
   }
 }
