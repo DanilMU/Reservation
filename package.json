@@ -1,0 +1,11 @@
+{
+  "devDependencies": {
+    "@trivago/prettier-plugin-sort-imports": "^5.2.2"
+  },
+  "dependencies": {
+    "@nestjs/config": "^4.0.2"
+  },
+  "scripts": {
+    "start:dev": "nest start --watch"
+  }
+}
